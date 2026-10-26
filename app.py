@@ -3,6 +3,7 @@ from pypdf import PdfReader
 import ollama
 
 app = FastAPI()
+documents = []
 
 @app.get("/")
 def home():
@@ -34,4 +35,9 @@ async def upload(file: UploadFile = File("sample_pdf.pdf")):
         text += page.extract_text() or ""
     text = " ".join(text.split())
     chunks = chunk_text(text)
-    return {"filename": file.filename, "pages": len(reader.pages), "characters": len(text), "chunks": len(chunks), "sample": chunks[:2]}
+
+    embeddings = ollama.embed(model="nomic-embed-text", input=chunks)["embeddings"]
+    documents.clear()
+    for chunk, emb in zip(chunks, embeddings):
+        documents.append({"text": chunk, "embedding": emb})
+    return {"filename": file.filename, "chunks": len(chunks), "embedded": len(documents), "dimensions": len(documents[0]["embedding"])}
