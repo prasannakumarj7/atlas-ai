@@ -17,10 +17,21 @@ def ask(question: str):
     return {"answer": response["message"]["content"]}
 
 
+def chunk_text(text, chunk_size=800, overlap=100):
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        start = end - overlap
+    return chunks
+
 @app.post("/upload")
 async def upload(file: UploadFile = File("sample_pdf.pdf")):
     reader = PdfReader(file.file)
     text = ""
     for page in reader.pages:
         text += page.extract_text() or ""
-    return {"filename": file.filename, "pages": len(reader.pages), "characters": len(text), "preview": text[:300]}
+    text = " ".join(text.split())
+    chunks = chunk_text(text)
+    return {"filename": file.filename, "pages": len(reader.pages), "characters": len(text), "chunks": len(chunks), "sample": chunks[:2]}
