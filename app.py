@@ -49,11 +49,31 @@ async def upload(file: UploadFile = File("sample_pdf.pdf")):
         documents.append({"text": chunk, "embedding": emb})
     return {"filename": file.filename, "chunks": len(chunks), "embedded": len(documents), "dimensions": len(documents[0]["embedding"])}
 
+def top_chunks(question, top_k=3):
+    q_emb = ollama.embed(model="nomic-embed-text", input=question)["embeddings"][0]
+    scored = [(similarity(q_emb, d["embedding"]), d["text"]) for d in documents]
+    scored.sort(reverse=True)
+    return scored[:top_k]
+
 @app.get("/search")
 def search(question: str, top_k: int = 3):
     if not documents:
         return {"error": "No document uploaded yet. Use /upload first."}
-    q_emb = ollama.embed(model="nomic-embed-text", input=question)["embeddings"][0]
-    scored = [(similarity(q_emb, d["embedding"]), d["text"]) for d in documents]
-    scored.sort(reverse=True)
-    return {"question": question, "results": [{"score": round(s, 3), "text": t} for s, t in scored[:top_k]]}
+    results = top_chunks(question, top_k)
+    return {"question": question, "results": [{"score": round(s, 3), "text": t} for s, t in results]}
+
+@app.get("/chat")
+def chat(question: str):
+    if not documents:
+        return {"error": "No document uploaded yet. Use /upload first."}
+    results = top_chunks(question, 3)
+    context = "\n\n".join(t for s, t in results)
+    prompt = f"""Answer the question using only the context below.
+If the answer is not in the context, say "I couldn't find that in the document."
+
+Context:
+{context}
+
+Question: {question}"""
+    response = ollama.chat(model="qwen2.5:3b", messages=[{"role": "user", "content": prompt}])
+    return {"question": question, "answer": response["message"]["content"], "sources": [round(s, 3) for s, t in results]}
