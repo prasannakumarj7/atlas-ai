@@ -27,6 +27,13 @@ def chunk_text(text, chunk_size=800, overlap=100):
         start = end - overlap
     return chunks
 
+def similarity(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(y * y for y in b) ** 0.5
+    return dot / (norm_a * norm_b)
+
+
 @app.post("/upload")
 async def upload(file: UploadFile = File("sample_pdf.pdf")):
     reader = PdfReader(file.file)
@@ -41,3 +48,12 @@ async def upload(file: UploadFile = File("sample_pdf.pdf")):
     for chunk, emb in zip(chunks, embeddings):
         documents.append({"text": chunk, "embedding": emb})
     return {"filename": file.filename, "chunks": len(chunks), "embedded": len(documents), "dimensions": len(documents[0]["embedding"])}
+
+@app.get("/search")
+def search(question: str, top_k: int = 3):
+    if not documents:
+        return {"error": "No document uploaded yet. Use /upload first."}
+    q_emb = ollama.embed(model="nomic-embed-text", input=question)["embeddings"][0]
+    scored = [(similarity(q_emb, d["embedding"]), d["text"]) for d in documents]
+    scored.sort(reverse=True)
+    return {"question": question, "results": [{"score": round(s, 3), "text": t} for s, t in scored[:top_k]]}
