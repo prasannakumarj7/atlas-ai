@@ -33,9 +33,27 @@ def top_chunks(question, top_k=3):
     res = collection.query(
         query_embeddings=[q_emb],
         n_results=top_k,
-        include=["documents", "distances"],
+        include=["documents", "metadatas", "distances"],
     )
-    return [(1 - dist, doc) for doc, dist in zip(res["documents"][0], res["distances"][0])]
+    return [
+        (1 - dist, doc, meta)
+        for doc, meta, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0])
+    ]
+
+
+def rag_prompt(question, results):
+    context = "\n\n".join(t for s, t, m in results)
+    return f"""Answer the question using only the context below.
+If the answer is not in the context, say "I couldn't find that in the document."
+
+Context:
+{context}
+
+Question: {question}"""
+
+
+def source_list(results):
+    return [{"source": m["source"], "page": m["page"], "score": round(s, 3)} for s, t, m in results]
 
 
 def decide(question):
@@ -58,11 +76,6 @@ Reply:"""
 @app.get("/")
 def home():
     return {"message": "Atlas AI is running"}
-
-
-@app.get("/ask")
-def ask(question: str):
-    return {"answer": ask_qwen(question)}
 
 
 @app.post("/upload")
@@ -95,7 +108,13 @@ def search(question: str, top_k: int = 3):
     if collection.count() == 0:
         return {"error": "No document uploaded yet. Use /upload first."}
     results = top_chunks(question, top_k)
-    return {"question": question, "results": [{"score": round(s, 3), "text": t} for s, t in results]}
+    return {
+        "question": question,
+        "results": [
+            {"score": round(s, 3), "source": m["source"], "page": m["page"], "text": t}
+            for s, t, m in results
+        ],
+    }
 
 
 @app.get("/chat")
@@ -103,15 +122,11 @@ def chat(question: str):
     if collection.count() == 0:
         return {"error": "No document uploaded yet. Use /upload first."}
     results = top_chunks(question, 3)
-    context = "\n\n".join(t for s, t in results)
-    prompt = f"""Answer the question using only the context below.
-If the answer is not in the context, say "I couldn't find that in the document."
-
-Context:
-{context}
-
-Question: {question}"""
-    return {"question": question, "answer": ask_qwen(prompt), "sources": [round(s, 3) for s, t in results]}
+    return {
+        "question": question,
+        "answer": ask_qwen(rag_prompt(question, results)),
+        "sources": source_list(results),
+    }
 
 
 @app.get("/agent")
@@ -119,14 +134,11 @@ def agent(question: str):
     action = decide(question)
     if action == "SEARCH":
         results = top_chunks(question, 3)
-        context = "\n\n".join(t for s, t in results)
-        prompt = f"""Answer the question using only the context below.
-If the answer is not in the context, say "I couldn't find that in the document."
+        return {
+            "question": question,
+            "action": action,
+            "answer": ask_qwen(rag_prompt(question, results)),
+            "sources": source_list(results),
+        }
+    return {"question": question, "action": action, "answer": ask_qwen(question), "sources": []}
 
-Context:
-{context}
-
-Question: {question}"""
-    else:
-        prompt = question
-    return {"question": question, "action": action, "answer": ask_qwen(prompt)}
