@@ -76,4 +76,48 @@ Context:
 
 Question: {question}"""
     response = ollama.chat(model="qwen2.5:3b", messages=[{"role": "user", "content": prompt}])
-    return {"question": question, "answer": response["message"]["content"], "sources": [round(s, 3) for s, t in results]}
+    return {"question": question, "answer": response["message"]["content"], "sources": [round(s, 3) for s, t in results]} 
+
+
+##agent endpoint 
+def ask_qwen(prompt):
+    response = ollama.chat(
+        model="qwen2.5:3b",
+        messages=[{"role": "user", "content": prompt}],
+        options={"temperature": 0},
+    )
+    return response["message"]["content"]
+
+def decide(question):
+    if not documents:
+        return "DIRECT"
+    topic = documents[0]["text"][:300]
+    prompt = f"""You are a router. An uploaded document starts like this:
+{topic}
+
+Decide how to answer the user's question. Reply with exactly one word:
+SEARCH - if the question is about the content or topic of the uploaded document
+DIRECT - if it is a greeting or a general question unrelated to the document
+
+Question: {question}
+Reply:"""
+    reply = ask_qwen(prompt).strip().upper()
+    return "SEARCH" if "SEARCH" in reply else "DIRECT"
+
+@app.get("/agent")
+def agent(question: str):
+    action = decide(question)
+    if action == "SEARCH":
+        results = top_chunks(question, 3)
+        context = "\n\n".join(t for s, t in results)
+        prompt = f"""Answer the question using only the context below.
+If the answer is not in the context, say "I couldn't find that in the document."
+
+Context:
+{context}
+
+Question: {question}"""
+    else:
+        prompt = question
+    answer = ask_qwen(prompt)
+    return {"question": question, "action": action, "answer": answer}
