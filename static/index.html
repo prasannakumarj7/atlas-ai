@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Atlas AI</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: #f5f6f8; color: #1f2937; }
+    header { padding: 16px 24px; background: #111827; color: white; }
+    header h1 { margin: 0; font-size: 20px; }
+    header p { margin: 4px 0 0; font-size: 13px; color: #9ca3af; }
+    main { display: flex; gap: 16px; max-width: 1000px; margin: 24px auto; padding: 0 16px; }
+    .panel { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    #sidebar { width: 280px; flex-shrink: 0; }
+    #chat { flex: 1; display: flex; flex-direction: column; }
+    h2 { margin: 0 0 12px; font-size: 15px; }
+    button { background: #2563eb; color: white; border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 14px; }
+    button:disabled { background: #9ca3af; cursor: wait; }
+    #status { margin-top: 10px; font-size: 13px; color: #6b7280; }
+    #docs { margin: 12px 0 0; padding: 0; list-style: none; font-size: 13px; }
+    #docs li { padding: 6px 0; border-top: 1px solid #e5e7eb; }
+
+    #messages { height: 400px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
+    .msg { max-width: 85%; padding: 10px 12px; border-radius: 12px; font-size: 14px; line-height: 1.45; white-space: pre-wrap; }
+    .msg.user { align-self: flex-end; background: #2563eb; color: white; }
+    .msg.bot { align-self: flex-start; background: #f3f4f6; }
+    .tag { margin-top: 8px; font-size: 11px; color: #6b7280; }
+    .chip { display: inline-block; margin: 6px 6px 0 0; padding: 2px 8px; font-size: 11px; background: #e0e7ff; color: #3730a3; border-radius: 999px; }
+    #inputRow { display: flex; gap: 8px; margin-top: 12px; }
+    #question { flex: 1; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; }
+        .trace { margin-top: 8px; font-size: 12px; color: #374151; }
+    .trace summary { cursor: pointer; color: #2563eb; }
+    .trace ol { margin: 6px 0 0; padding-left: 18px; }
+    .trace li { margin-bottom: 6px; }
+    .snippet { color: #6b7280; font-style: italic; margin-top: 2px; }
+
+    @media (max-width: 700px) {
+      main { flex-direction: column; }
+      #sidebar { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Atlas AI</h1>
+    <p>Research &amp; Knowledge Agent · runs locally</p>
+  </header>
+  <main>
+    <section id="sidebar" class="panel">
+      <h2>Documents</h2>
+      <input type="file" id="file" accept=".pdf">
+      <button id="uploadBtn">Upload PDF</button>
+      <div id="status"></div>
+      <ul id="docs"></ul>
+    </section>
+    <section id="chat" class="panel">
+      <h2>Chat</h2>
+      <div id="messages"></div>
+      <div id="inputRow">
+        <input type="text" id="question" placeholder="Ask a question...">
+        <button id="sendBtn">Send</button>
+      </div>
+    </section>
+  </main>
+  <script>
+    const fileInput = document.getElementById("file");
+    const uploadBtn = document.getElementById("uploadBtn");
+    const statusBox = document.getElementById("status");
+    const docsList = document.getElementById("docs");
+    const messages = document.getElementById("messages");
+    const questionInput = document.getElementById("question");
+    const sendBtn = document.getElementById("sendBtn");
+
+    async function loadDocs() {
+      const res = await fetch("/documents");
+      const data = await res.json();
+      docsList.innerHTML = "";
+      for (const d of data.documents) {
+        const li = document.createElement("li");
+        li.textContent = d.source + " (" + d.chunks + " chunks)";
+        docsList.appendChild(li);
+      }
+    }
+
+    uploadBtn.onclick = async () => {
+      const file = fileInput.files[0];
+      if (!file) { statusBox.textContent = "Choose a PDF first."; return; }
+      uploadBtn.disabled = true;
+      statusBox.textContent = "Uploading and indexing... this can take up to a minute.";
+      const form = new FormData();
+      form.append("file", file);
+      try {
+        const res = await fetch("/upload", { method: "POST", body: form });
+        const data = await res.json();
+        statusBox.textContent = data.error ? data.error : "Done: " + data.chunks + " chunks indexed.";
+        await loadDocs();
+      } catch (err) {
+        statusBox.textContent = "Upload failed. Is the server running?";
+      }
+      uploadBtn.disabled = false;
+    };
+
+    function addMessage(text, who) {
+      const div = document.createElement("div");
+      div.className = "msg " + who;
+      const body = document.createElement("div");
+      body.textContent = text;
+      div.appendChild(body);
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+      return div;
+    }
+
+        function addStep(list, text) {
+      const li = document.createElement("li");
+      li.textContent = text;
+      list.appendChild(li);
+      return li;
+    }
+
+    async function send() {
+      const question = questionInput.value.trim();
+      if (!question) return;
+      questionInput.value = "";
+      addMessage(question, "user");
+      const reply = addMessage("Thinking...", "bot");
+      sendBtn.disabled = true;
+      try {
+        const res = await fetch("/agent?question=" + encodeURIComponent(question));
+        const data = await res.json();
+        reply.firstChild.textContent = data.answer;
+
+        const tag = document.createElement("div");
+        tag.className = "tag";
+        tag.textContent = data.action === "SEARCH" ? "Searched your documents" : "Answered directly (no document lookup)";
+        reply.appendChild(tag);
+
+        for (const s of data.sources) {
+          const chip = document.createElement("span");
+          chip.className = "chip";
+          chip.textContent = s.source + " · p." + s.page;
+          reply.appendChild(chip);
+        }
+
+        const details = document.createElement("details");
+        details.className = "trace";
+        const summary = document.createElement("summary");
+        summary.textContent = "Show agent steps";
+        details.appendChild(summary);
+        const steps = document.createElement("ol");
+        addStep(steps, "Router decided: " + data.action);
+        if (data.action === "SEARCH") {
+          const found = addStep(steps, "Retrieved " + data.sources.length + " chunks, best first:");
+          for (const s of data.sources) {
+            const line = document.createElement("div");
+            line.className = "snippet";
+            line.textContent = "p." + s.page + " · score " + s.score + " · " + s.snippet + "...";
+            found.appendChild(line);
+          }
+          addStep(steps, "Qwen wrote the answer using only those chunks");
+        } else {
+          addStep(steps, "Qwen answered from its own knowledge, with no lookup");
+        }
+        details.appendChild(steps);
+        reply.appendChild(details);
+      } catch (err) {
+        reply.firstChild.textContent = "Something went wrong. Is the server running?";
+      }
+      sendBtn.disabled = false;
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    sendBtn.onclick = send;
+    questionInput.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+
+    addMessage("Hi! Ask me anything. Upload a PDF to ask questions about it, and I will show the pages I used.", "bot");
+    loadDocs();
+  </script>
+</body>
+</html>

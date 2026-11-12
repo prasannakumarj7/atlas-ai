@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import FileResponse
 from pypdf import PdfReader
 import chromadb
 import ollama
@@ -53,7 +54,10 @@ Question: {question}"""
 
 
 def source_list(results):
-    return [{"source": m["source"], "page": m["page"], "score": round(s, 3)} for s, t, m in results]
+    return [
+        {"source": m["source"], "page": m["page"], "score": round(s, 3), "snippet": t[:150]}
+        for s, t, m in results
+    ]
 
 
 def decide(question):
@@ -75,7 +79,7 @@ Reply:"""
 
 @app.get("/")
 def home():
-    return {"message": "Atlas AI is running"}
+    return FileResponse("static/index.html")
 
 
 @app.post("/upload")
@@ -141,4 +145,12 @@ def agent(question: str):
             "sources": source_list(results),
         }
     return {"question": question, "action": action, "answer": ask_qwen(question), "sources": []}
+
+@app.get("/documents")
+def documents():
+    data = collection.get(include=["metadatas"])
+    counts = {}
+    for m in data["metadatas"]:
+        counts[m["source"]] = counts.get(m["source"], 0) + 1
+    return {"documents": [{"source": s, "chunks": c} for s, c in counts.items()]}
 
